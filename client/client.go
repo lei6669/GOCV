@@ -9,6 +9,13 @@ import (
 	"gocv.io/x/gocv"
 )
 
+type Frame struct {
+	// Frame number used to match the ACK
+	count		int
+	start		time.Time
+}
+
+
 func main() {
 	// Set up video source
   videoPath := "vid.avi"
@@ -24,13 +31,38 @@ func main() {
   defer img.Close()
 
 	// Build connection to server
-	connection, err := net.Dial("tcp", "localhost:27001")
-	// connection, err := net.Dial("tcp", "3.84.55.178:27001")
+	// connection, err := net.Dial("tcp", "localhost:27001")
+	connection, err := net.Dial("tcp", "3.84.55.178:27001")
 	if err != nil {
 		panic(err)
 	}
 	defer connection.Close()
 
+	// Buffered channel for Read-Write coordination
+	ch := make(chan *Frame)
+
+	// Use a seperate routine to read ACK
+	go func() {
+		// Read ACK from server: get ACK only after the processing has been finished
+		for {
+			// log.Println(len(ch))
+			select {
+			case frameACK := <- ch:
+				resultBuffer := make([]byte, 2)
+				connection.Read(resultBuffer)
+				if string(resultBuffer) != "OK"{
+					log.Println("Frame result wrong")
+					os.Exit(0)
+				}
+				t3 := time.Now()
+				log.Println(t3.Sub(frameACK.start))
+			}
+		}
+		log.Println("All frames processing finish")
+	}()
+
+	// Main routine for sending the frames unblocked
+	frameCount := 1
 	for {
 		// Read one frame from video source
 		if ok := video.Read(&img); !ok {
@@ -78,21 +110,16 @@ func main() {
         break  // all data in this frame has been sent out
       }
 		}
-		t2 := time.Now()
 
-		// Read ACK from server: get ACK only after the processing has been finished
-		resultBuffer := make([]byte, 2)
-		connection.Read(resultBuffer)
-		if string(resultBuffer) != "OK"{
-			log.Println("Frame result wrong")
-			break
+		frameCount++
+		ch <- &Frame{
+			count: frameCount,
+			start: t1,
 		}
-		t3 := time.Now()
 
-		log.Println(t2.Sub(t1))
-		log.Println(t3.Sub(t2))
-		log.Println(t3.Sub(t1))
-		log.Println("========")
+		t2 := time.Now()
+		log.Println("Data sent: "+strconv.FormatInt(int64(t2.Sub(t1))/1000000, 10))
+		// log.Println("========")
 	}
 }
 
